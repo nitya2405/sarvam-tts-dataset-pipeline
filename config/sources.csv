@@ -1,0 +1,18 @@
+language,genre,target_emotion_primary,speaker_name,channel_name,video_url,notes
+en,news,intense_dramatic,Arnab Goswami,Republic World,https://youtu.be/1IfFxHvoFwU,check for background music/stings under commentary
+en,news,intense_dramatic,Arnab Goswami,Republic World,https://youtu.be/Rz7G5TVS5Rk,same speaker as above different topic
+en,speech,happy_excited,Anand Mahindra,English Speeches,https://youtu.be/6uUblznfrsk,trim channel intro voiceover if present before real speaker starts
+en,speech,happy_excited,Palki Sharma,English Speeches,https://youtu.be/-Z9b_v612QQ,trim channel intro voiceover if present before real speaker starts
+en,conversational,calm_reverent,Dr Vivek Modi,Dr. Vivek Modi,https://youtu.be/4jnyb9hNoMY,instructional tone good for calm conversational
+en,vlog,conversational_casual,Sunita Rawat,Sunita's English Adventure,https://youtu.be/rvLjNosnU8U,HIGH RISK check for background music under narration before processing
+en,podcast,sad,Kenny Sebastian,Kenny Sebastian,https://youtu.be/1BLkYf187Es,verify by listening tone may be reflective rather than purely sad
+en,speech,happy_excited,Nikhil Kamath,English Speeches,https://youtu.be/CqeyXD5RAWw,trim channel intro voiceover if present before real speaker starts
+en,standup,happy_excited,Urooj Ashfaq,Stand up Comedy,https://youtu.be/EzJhTb564iA,pick storytelling stretches not punchline moments to avoid audience laughter overlap
+en,dramatic,sad,Rohan Joshi,Kommune India,https://youtu.be/nXvQX3MNcmc,spoken word solo mic should be clean
+hi,conversational,calm_reverent,Narendra Modi,Bharatiya Janata Party,https://youtu.be/4_HHbZIX64s,trim AIR jingle and intro music keep only speaking segment
+hi,news,intense_dramatic,Ravish Kumar,Ravish Kumar Official,https://youtu.be/-by301ZV-dc,verify by listening tone may read more formal than intense
+hi,poetry,calm_reverent,Nayab Midha,Nayab Midha,https://youtu.be/6AdLwGUQ9nE,verify by listening could land as sad or romantic instead check for soft background music
+hi,cooking,conversational_casual,Kabita,Kabita's Kitchen,https://youtu.be/LutmL5YKfX4,HIGH RISK check carefully for background music common in cooking channels
+hi,speech,happy_excited,Vikas Sir,Vikas Sir Speech,https://youtu.be/sGAe5K79h-g,motivational delivery should be high energy
+hi,standup,happy_excited,Ravi Gupta,BBC News Hindi,https://youtu.be/PDx1HWJezwU,interview format not pure standup verify humour delivery and isolate from interviewer voice via diarization
+hi,dramatic,neutral,Unknown Narrator,English For All,https://youtu.be/cgh-kOvO1fk,ICSE literature explainer verify by listening may read as formal instructional rather than dramatic

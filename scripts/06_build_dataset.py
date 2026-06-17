@@ -1,0 +1,293 @@
+"""
+Phase 6: Build a HuggingFace dataset from approved clips and push to the Hub.
+
+Reads metadata/clips_metadata.csv, filters to approved clips only, builds a
+datasets.Dataset with the Audio feature type, generates a dataset card, and
+pushes to the Hub as a public dataset.
+
+HF_TOKEN must be set as an environment variable (never hardcoded).
+
+Usage:
+    python scripts/06_build_dataset.py --repo-id your-username/sarvam-tts-dataset
+    python scripts/06_build_dataset.py --repo-id your-username/sarvam-tts-dataset --dry-run
+    python scripts/06_build_dataset.py --repo-id your-username/sarvam-tts-dataset --private
+"""
+
+import argparse
+import csv
+import os
+import sys
+from datetime import date
+from pathlib import Path
+
+import yaml
+from dotenv import load_dotenv
+
+load_dotenv()
+
+ROOT = Path(__file__).parent.parent
+CLIPS_META_CSV = ROOT / "metadata" / "clips_metadata.csv"
+CLIPS_DIR = ROOT / "data" / "clips"
+DATASET_CARD_PATH = ROOT / "dataset_card" / "README.md"
+SETTINGS = yaml.safe_load((ROOT / "config" / "settings.yaml").read_text())
+
+
+def get_hf_token() -> str:
+    token = os.environ.get("HF_TOKEN", "")
+    if not token:
+        sys.exit("ERROR: HF_TOKEN environment variable not set. Add it to .env or export it.")
+    return token
+
+
+def load_approved_clips() -> list[dict]:
+    if not CLIPS_META_CSV.exists():
+        sys.exit(f"ERROR: {CLIPS_META_CSV} not found. Run phases 1-5 first.")
+    with open(CLIPS_META_CSV, newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    approved = [r for r in rows if r.get("approved", "").lower() == "true"]
+    return approved
+
+
+def build_hf_dataset(clips: list[dict], clips_dir: Path):
+    from datasets import Audio, Dataset
+
+    records = []
+    for clip in clips:
+        fn = clip.get("clip_filename", "")
+        path = clips_dir / fn
+        if not path.exists():
+            print(f"  [WARN] Missing clip file, skipping: {fn}")
+            continue
+
+        records.append({
+            "audio": str(path),
+            "transcript": clip.get("transcript", ""),
+            "primary_emotion": clip.get("primary_emotion", ""),
+            "secondary_emotion": clip.get("secondary_emotion", "") or None,
+            "language": clip.get("language", ""),
+            "genre": clip.get("genre", ""),
+            "duration_s": float(clip.get("duration_s", 0) or 0),
+            "source_video_id": clip.get("video_id", ""),
+            "source_channel": clip.get("source_channel", ""),
+            "source_url": clip.get("source_url", ""),
+            "clip_start_time_s": float(clip.get("clip_start_time_s", 0) or 0),
+            "clip_end_time_s": float(clip.get("clip_end_time_s", 0) or 0),
+            "license_note": (
+                "Audio sourced from publicly available YouTube videos under fair use "
+                "for non-commercial research. Original rights belong to respective creators."
+            ),
+        })
+
+    if not records:
+        sys.exit("ERROR: No valid clip files found for approved clips. Check data/clips/")
+
+    ds = Dataset.from_list(records)
+    ds = ds.cast_column("audio", Audio(sampling_rate=24000))
+    return ds
+
+
+def stats_summary(clips: list[dict]) -> dict:
+    by_lang: dict[str, float] = {}
+    by_emotion: dict[str, int] = {}
+    by_genre: dict[str, int] = {}
+
+    for c in clips:
+        lang = c.get("language", "?")
+        dur = float(c.get("duration_s", 0) or 0)
+        by_lang[lang] = by_lang.get(lang, 0) + dur
+
+        emo = c.get("primary_emotion", "unknown")
+        by_emotion[emo] = by_emotion.get(emo, 0) + 1
+
+        genre = c.get("genre", "?")
+        by_genre[genre] = by_genre.get(genre, 0) + 1
+
+    return {
+        "total_clips": len(clips),
+        "total_duration_minutes": round(sum(by_lang.values()) / 60, 1),
+        "by_language_minutes": {k: round(v / 60, 1) for k, v in sorted(by_lang.items())},
+        "by_emotion": dict(sorted(by_emotion.items(), key=lambda x: -x[1])),
+        "by_genre": dict(sorted(by_genre.items(), key=lambda x: -x[1])),
+    }
+
+
+def generate_dataset_card(clips: list[dict], repo_id: str) -> str:
+    stats = stats_summary(clips)
+    today = date.today().isoformat()
+
+    lang_lines = "\n".join(
+        f"- **{lang.upper()}**: {mins} minutes"
+        for lang, mins in stats["by_language_minutes"].items()
+    )
+    emotion_lines = "\n".join(
+        f"- `{emo}`: {count} clips"
+        for emo, count in stats["by_emotion"].items()
+    )
+    genre_lines = "\n".join(
+        f"- `{genre}`: {count} clips"
+        for genre, count in stats["by_genre"].items()
+    )
+
+    return f"""---
+language:
+- hi
+- en
+license: cc-by-4.0
+task_categories:
+- automatic-speech-recognition
+- text-to-speech
+tags:
+- audio
+- tts
+- asr
+- indian-english
+- hindi
+- emotion
+pretty_name: Sarvam TTS Dataset
+size_categories:
+- 1K<n<10K
+---
+
+# Sarvam TTS Dataset
+
+A curated dataset of clean, single-speaker audio clips in Indian English and Hindi,
+assembled for training and evaluating text-to-speech (TTS) and speech recognition models.
+
+## Dataset Summary
+
+- **Total clips**: {stats['total_clips']}
+- **Total duration**: {stats['total_duration_minutes']} minutes
+- **Created**: {today}
+- **Repository**: `{repo_id}`
+
+## Duration by Language
+
+{lang_lines}
+
+## Emotion Distribution
+
+Each clip is tagged with one primary emotion from the taxonomy:
+`neutral`, `formal`, `happy_excited`, `sad`, `angry`, `calm_reverent`,
+`conversational_casual`, `intense_dramatic`.
+
+{emotion_lines}
+
+## Genre Distribution
+
+{genre_lines}
+
+## Methodology
+
+1. **Sources**: Publicly available YouTube videos featuring Indian English and Hindi speakers
+   across diverse genres (news, speeches, stand-up comedy, poetry, cooking, vlog, podcast).
+2. **Download**: Audio extracted via yt-dlp at best available quality.
+3. **Diarization**: Speaker separation using Sarvam's batch STT API (`saaras:v2.5`)
+   with `with_diarization=True`. Target speakers manually identified per source.
+4. **Segmentation**: Adjacent turns from the target speaker merged (gap < 1 s),
+   then split into 45–60 s clips at natural pause/silence boundaries.
+5. **Audio processing**:
+   - Resampled to 24 000 Hz mono 16-bit PCM WAV
+   - High-pass filter at 80 Hz (removes rumble/hum)
+   - Loudness normalized to −23 LUFS, −1 dBTP true-peak ceiling
+   - Silence trimmed at clip edges with ~175 ms padding
+6. **Transcription**: Verbatim ASR via Sarvam API (`saarika:v2`), human-corrected
+   during tagging.
+7. **Tagging**: Human review of each clip using a Gradio tagging application.
+   Clips approved/rejected individually; emotion tags assigned per the taxonomy above.
+
+## Audio Format
+
+| Property | Value |
+|---|---|
+| Sample rate | 24 000 Hz |
+| Channels | Mono |
+| Bit depth | 16-bit PCM |
+| Format | WAV |
+| Loudness | −23 LUFS |
+| True peak | −1 dBTP |
+
+## License & Copyright
+
+Audio clips are sourced from publicly available YouTube videos under fair use
+for non-commercial research purposes. Original copyrights remain with the respective
+creators and channels. Dataset metadata (transcripts, tags) is released under CC-BY 4.0.
+
+## Citation
+
+If you use this dataset, please cite:
+
+```
+@dataset{{sarvam-tts-dataset-{today[:4]},
+  title  = {{Sarvam TTS Dataset}},
+  year   = {today[:4]},
+  url    = {{https://huggingface.co/datasets/{repo_id}}},
+}}
+```
+"""
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Build and push HuggingFace TTS dataset")
+    parser.add_argument("--repo-id", required=True,
+                        help="HuggingFace repo ID, e.g. your-username/sarvam-tts-dataset")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Build dataset locally but do not push to Hub")
+    parser.add_argument("--private", action="store_true",
+                        help="Push as a private dataset (default: public)")
+    args = parser.parse_args()
+
+    token = None if args.dry_run else get_hf_token()
+
+    approved = load_approved_clips()
+    if not approved:
+        sys.exit("No approved clips found in clips_metadata.csv. "
+                 "Run 05_tagging_app.py to approve clips first.")
+
+    stats = stats_summary(approved)
+    print(f"Approved clips: {stats['total_clips']} | "
+          f"{stats['total_duration_minutes']} minutes total")
+    print(f"Languages: {stats['by_language_minutes']}")
+    print(f"Emotions: {stats['by_emotion']}")
+    print()
+
+    print("Building dataset...")
+    ds = build_hf_dataset(approved, CLIPS_DIR)
+    print(f"Dataset built: {ds}")
+
+    card_text = generate_dataset_card(approved, args.repo_id)
+    DATASET_CARD_PATH.parent.mkdir(parents=True, exist_ok=True)
+    DATASET_CARD_PATH.write_text(card_text, encoding="utf-8")
+    print(f"Dataset card written: {DATASET_CARD_PATH}")
+
+    if args.dry_run:
+        print("\n[DRY RUN] Dataset built locally — not pushed to Hub.")
+        print(f"To push: python scripts/06_build_dataset.py --repo-id {args.repo_id}")
+        return
+
+    from huggingface_hub import HfApi
+
+    api = HfApi(token=token)
+    api.create_repo(
+        repo_id=args.repo_id,
+        repo_type="dataset",
+        private=args.private,
+        exist_ok=True,
+    )
+    print(f"Pushing to Hub: {args.repo_id} ({'private' if args.private else 'public'})...")
+    ds.push_to_hub(
+        args.repo_id,
+        token=token,
+        private=args.private,
+    )
+    api.upload_file(
+        path_or_fileobj=str(DATASET_CARD_PATH),
+        path_in_repo="README.md",
+        repo_id=args.repo_id,
+        repo_type="dataset",
+        token=token,
+    )
+    print(f"\nDone! Dataset at: https://huggingface.co/datasets/{args.repo_id}")
+
+
+if __name__ == "__main__":
+    main()
