@@ -255,12 +255,8 @@ def split_into_clips(segment_audio: np.ndarray, sr: int,
     while offset < total_s:
         remaining = total_s - offset
         if remaining < MIN_CLIP_S:
-            # Not enough audio for a minimum-length clip; attach to last if possible
-            if clips:
-                last = clips[-1]
-                last["end_s"] = offset + remaining
-                last["audio"] = np.concatenate([last["audio"],
-                                                 segment_audio[int(offset * sr):]])
+            # Remainder is too short for a minimum-length clip — discard it.
+            # (Attaching it to the previous clip bloats that clip well past MAX_CLIP_S.)
             break
 
         chunk_end_max = min(offset + MAX_CLIP_S, total_s)
@@ -334,8 +330,15 @@ def process_source(row: dict, meta_rows: list[dict], overwrite: bool = False) ->
 
     lang = row.get("language", "en").strip()
     genre = row.get("genre", "").strip()
-    existing_for_source = {r["clip_filename"] for r in meta_rows
-                            if str(r.get("source_index")) == index}
+
+    if overwrite:
+        # Delete all existing clips and metadata entries for this source before re-processing
+        stale = [r for r in meta_rows if str(r.get("source_index")) == index]
+        for r in stale:
+            fn = r.get("clip_filename", "")
+            if fn:
+                (CLIPS_DIR / fn).unlink(missing_ok=True)
+        meta_rows[:] = [r for r in meta_rows if str(r.get("source_index")) != index]
 
     print(f"  Loading audio: {source_path.name}")
     raw_audio, raw_sr = load_as_mono_float(source_path)
@@ -348,8 +351,10 @@ def process_source(row: dict, meta_rows: list[dict], overwrite: bool = False) ->
     merged = merge_adjacent_turns(turns, MERGE_GAP_S)
     print(f"  Speaker '{target_speaker}': {len(turns)} turns -> {len(merged)} merged stretches")
 
+    # Calculate the starting clip number ONCE before any clips are created.
+    # Using this fixed offset + a local counter avoids double-incrementing.
+    initial_clip_count = len([r for r in meta_rows if str(r.get("source_index")) == index])
     clip_count = 0
-    meta_by_filename = {r["clip_filename"]: r for r in meta_rows}
 
     for stretch in merged:
         stretch_start = stretch["start_time_s"]
@@ -367,19 +372,9 @@ def process_source(row: dict, meta_rows: list[dict], overwrite: bool = False) ->
             clip_audio = clip_data["audio"]
             clip_start = clip_data["start_s"]
             clip_end = clip_data["end_s"]
-            clip_dur = clip_end - clip_start
 
-            # Count existing clips for this source to assign the next index
-            existing_count = sum(1 for fn in meta_by_filename
-                                  if fn.startswith(f"{lang}_{genre}_{int(index):03d}_"))
-            clip_count_global = len([r for r in meta_rows if str(r.get("source_index")) == index])
-            clip_filename = f"{lang}_{genre}_{int(index):03d}_{clip_count_global + clip_count + 1:04d}.wav"
+            clip_filename = f"{lang}_{genre}_{int(index):03d}_{initial_clip_count + clip_count + 1:04d}.wav"
             clip_path = CLIPS_DIR / clip_filename
-
-            if clip_filename in existing_for_source and not overwrite:
-                print(f"  [SKIP] Clip already exists: {clip_filename}")
-                clip_count += 1
-                continue
 
             # Apply audio processing pipeline
             processed = highpass_filter(clip_audio, SR, HP_CUTOFF)

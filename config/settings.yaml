@@ -8,7 +8,7 @@ audio:
   silence_trim_padding_ms: 175
   min_clip_duration_s: 45
   max_clip_duration_s: 60
-  merge_gap_threshold_s: 1.0
+  merge_gap_threshold_s: 3.0
   silence_detection_threshold_db: -40
   silence_min_len_ms: 200
 
