@@ -29,44 +29,43 @@ primary emotion label by a human reviewer.
 
 | | |
 |---|---|
-| Total clips | 86 |
-| Total duration | 74.4 minutes |
+| Total clips | 72 |
+| Total duration | 62.5 minutes |
 | Languages | Indian English (EN), Hindi (HI) |
 | Created | 2026-06-18 |
 | Audio format | 24 kHz mono 16-bit PCM WAV, −23 LUFS |
 
 ## Duration and Emotion by Language
 
-**English — 47 clips, 40.6 minutes**
+**English — 37 clips, 32.0 minutes**
 
 | Emotion | Clips |
 |---|---|
-| happy_excited | 12 |
-| intense_dramatic | 7 |
 | conversational_casual | 6 |
-| sad | 7 |
-| calm_reverent | 5 |
+| happy_excited | 6 |
+| intense_dramatic | 6 |
+| formal | 4 |
 | neutral | 4 |
-| formal | 3 |
+| sad | 4 |
+| calm_reverent | 4 |
 | angry | 3 |
 
-**Hindi — 39 clips, 33.8 minutes**
+**Hindi — 35 clips, 30.5 minutes**
 
 | Emotion | Clips |
 |---|---|
-| intense_dramatic | 8 |
-| conversational_casual | 7 |
 | happy_excited | 6 |
+| sad | 5 |
 | calm_reverent | 5 |
-| angry | 4 |
-| sad | 4 |
+| formal | 4 |
+| intense_dramatic | 4 |
 | neutral | 3 |
-| formal | 2 |
+| angry | 3 |
 
 ## Genre Distribution
 
-Across 17 source videos spanning: speech (21), conversational (14), podcast (13),
-news (11), dramatic (11), vlog (7), standup (6), cooking (2), poetry (1).
+Across 20 source videos spanning: speech (21), conversational (14), podcast (13),
+news (11), dramatic (11), vlog (7), standup (6), cooking (2), poetry (3).
 
 ## Methodology
 
