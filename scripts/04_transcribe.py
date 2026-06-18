@@ -137,7 +137,15 @@ def transcribe_batch(clips: list[dict], rows: list[dict]) -> int:
                 job.download_outputs(output_dir=tmpdir)
                 output_files = sorted(Path(tmpdir).glob("*.json"))
 
-                for i, (clip_row, out_file) in enumerate(zip(chunk, output_files)):
+                # SDK names outputs after the uploaded filename (e.g. "en_news_000_0001.json").
+                # Match by stem, not by position — zip would misalign when alphabetical
+                # order of filenames differs from upload order.
+                for out_file in output_files:
+                    clip_name = out_file.stem + ".wav"
+                    clip_row = next((c for c in chunk if c["clip_filename"] == clip_name), None)
+                    if clip_row is None:
+                        print(f"    [WARN] No row for SDK output {out_file.name}")
+                        continue
                     try:
                         raw = json.loads(out_file.read_text(encoding="utf-8"))
                         transcript = (
@@ -148,10 +156,10 @@ def transcribe_batch(clips: list[dict], rows: list[dict]) -> int:
                         if match:
                             match["transcript"] = transcript
                             preview = transcript[:70] + "..." if len(transcript) > 70 else transcript
-                            print(f"    [{i}] {fn}: {preview!r}")
+                            print(f"    {fn}: {preview!r}")
                             success_total += 1
                     except Exception as e:
-                        print(f"    [ERROR] clip {i}: {e}")
+                        print(f"    [ERROR] {out_file.name}: {e}")
 
             save_clips_meta(rows)
 
