@@ -62,7 +62,7 @@ def get_api_key() -> str:
 def load_clips_meta() -> list[dict]:
     if not CLIPS_META_CSV.exists():
         sys.exit(f"ERROR: {CLIPS_META_CSV} not found. Run 03_preprocess_audio.py first.")
-    with open(CLIPS_META_CSV, newline="", encoding="utf-8") as f:
+    with open(CLIPS_META_CSV, newline="", encoding="utf-8-sig") as f:
         return list(csv.DictReader(f))
 
 
@@ -137,11 +137,12 @@ def transcribe_batch(clips: list[dict], rows: list[dict]) -> int:
                 job.download_outputs(output_dir=tmpdir)
                 output_files = sorted(Path(tmpdir).glob("*.json"))
 
-                # SDK names outputs after the uploaded filename (e.g. "en_news_000_0001.json").
-                # Match by stem, not by position — zip would misalign when alphabetical
+                # SDK names outputs after the uploaded filename (e.g. "en_news_000_0001.wav.json").
+                # stem strips the last extension, giving back "en_news_000_0001.wav".
+                # Match by name, not by position — zip would misalign when alphabetical
                 # order of filenames differs from upload order.
                 for out_file in output_files:
-                    clip_name = out_file.stem + ".wav"
+                    clip_name = out_file.stem  # "foo.wav.json" → stem → "foo.wav"
                     clip_row = next((c for c in chunk if c["clip_filename"] == clip_name), None)
                     if clip_row is None:
                         print(f"    [WARN] No row for SDK output {out_file.name}")

@@ -41,7 +41,7 @@ CLIPS_META_FIELDS = [
 def load_meta() -> list[dict]:
     if not CLIPS_META_CSV.exists():
         return []
-    with open(CLIPS_META_CSV, newline="", encoding="utf-8") as f:
+    with open(CLIPS_META_CSV, newline="", encoding="utf-8-sig") as f:
         return list(csv.DictReader(f))
 
 
@@ -123,7 +123,7 @@ def build_app() -> gr.Blocks:
         approved = True if approved_val.lower() == "true" else False
         info = row_info(row)
         prog = progress_text(rows)
-        return audio, transcript, primary, secondary, approved, info, prog
+        return [audio, transcript, primary, secondary, approved, info, prog]
 
     def save_and_advance(transcript, primary, secondary, approved, go_next):
         rows = state["rows"]
@@ -161,7 +161,7 @@ def build_app() -> gr.Blocks:
         idx = find_unreviewed_index(state["rows"], state["current"])
         return load_clip(idx) + [idx]
 
-    with gr.Blocks(title="Sarvam TTS Dataset Tagger", theme=gr.themes.Soft()) as app:
+    with gr.Blocks(title="Sarvam TTS Dataset Tagger") as app:
         gr.Markdown("# Sarvam TTS Dataset Tagger")
 
         with gr.Row():
@@ -240,7 +240,7 @@ def main() -> None:
 
     app = build_app()
     print(f"Starting tagging app at http://localhost:{args.port}")
-    app.launch(server_port=args.port, share=args.share, inbrowser=True)
+    app.launch(server_port=args.port, share=args.share, inbrowser=True, theme=gr.themes.Soft())
 
 
 if __name__ == "__main__":

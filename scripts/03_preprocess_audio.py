@@ -292,7 +292,7 @@ def split_into_clips(segment_audio: np.ndarray, sr: int,
 def load_clips_meta() -> list[dict]:
     if not CLIPS_META_CSV.exists():
         return []
-    with open(CLIPS_META_CSV, newline="", encoding="utf-8") as f:
+    with open(CLIPS_META_CSV, newline="", encoding="utf-8-sig") as f:
         return list(csv.DictReader(f))
 
 
