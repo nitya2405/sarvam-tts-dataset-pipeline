@@ -24,6 +24,9 @@ import sys
 import tempfile
 from pathlib import Path
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 import yaml
 from dotenv import load_dotenv
 
@@ -38,6 +41,7 @@ BATCH_MODEL = SETTINGS["sarvam"]["batch_model"]
 TRANSCRIPTION_MODE = SETTINGS["sarvam"]["transcription_mode"]
 COST_PER_HOUR_INR = SETTINGS["sarvam"]["cost_per_hour_inr"]
 LANG_CODES = SETTINGS["language_codes"]
+UPLOAD_BATCH_SIZE = 20  # Sarvam API hard limit per upload_files() call
 
 CLIPS_META_FIELDS = [
     "clip_filename", "language", "genre", "speaker_name",
@@ -77,16 +81,15 @@ def estimate_cost(rows: list[dict]) -> tuple[float, float]:
 
 def transcribe_batch(clips: list[dict], rows: list[dict]) -> int:
     """
-    Submit all clips as one batch job grouped by language.
-    Clips within one language share a job; different languages need separate jobs
-    because language_code is per-job in the SDK.
+    Submit clips grouped by language. Each language is split into chunks of
+    UPLOAD_BATCH_SIZE (≤20) because the Sarvam API rejects larger uploads.
+    Each chunk becomes its own job. Progress is saved after every chunk.
     Returns count of successfully transcribed clips.
     """
     from sarvamai import SarvamAI
 
     client = SarvamAI(api_subscription_key=get_api_key())
 
-    # Group by language so each job has a single language_code
     by_lang: dict[str, list[dict]] = {}
     for clip in clips:
         lang = clip.get("language", "en").strip()
@@ -96,63 +99,61 @@ def transcribe_batch(clips: list[dict], rows: list[dict]) -> int:
 
     for lang, lang_clips in by_lang.items():
         lang_code = LANG_CODES.get(lang, "en-IN")
-        clip_paths = [CLIPS_DIR / c["clip_filename"] for c in lang_clips]
-        missing = [p for p in clip_paths if not p.exists()]
-        if missing:
-            print(f"  [WARN] Missing files, skipping: {[p.name for p in missing]}")
-            clip_paths = [p for p in clip_paths if p.exists()]
-            lang_clips = [c for c in lang_clips if (CLIPS_DIR / c["clip_filename"]).exists()]
-
-        if not clip_paths:
+        lang_clips = [c for c in lang_clips if (CLIPS_DIR / c["clip_filename"]).exists()]
+        missing_count = len([c for c in clips if c.get("language") == lang]) - len(lang_clips)
+        if missing_count:
+            print(f"  [WARN] {missing_count} {lang.upper()} clips missing on disk, skipping them")
+        if not lang_clips:
             continue
 
-        print(f"\n  Submitting {len(clip_paths)} {lang.upper()} clips "
-              f"(model={BATCH_MODEL}, mode={TRANSCRIPTION_MODE}, lang={lang_code})...")
+        chunks = [lang_clips[i:i + UPLOAD_BATCH_SIZE]
+                  for i in range(0, len(lang_clips), UPLOAD_BATCH_SIZE)]
+        print(f"\n  {lang.upper()}: {len(lang_clips)} clips → {len(chunks)} job(s) of ≤{UPLOAD_BATCH_SIZE}")
 
-        job = client.speech_to_text_job.create_job(
-            model=BATCH_MODEL,
-            mode=TRANSCRIPTION_MODE,
-            language_code=lang_code,
-            with_diarization=False,
-        )
-        job.upload_files(file_paths=[str(p) for p in clip_paths])
-        job.start()
+        for chunk_idx, chunk in enumerate(chunks):
+            chunk_paths = [CLIPS_DIR / c["clip_filename"] for c in chunk]
+            label = f"chunk {chunk_idx + 1}/{len(chunks)}"
+            print(f"\n    Submitting {len(chunk_paths)} clips "
+                  f"(model={BATCH_MODEL}, mode={TRANSCRIPTION_MODE}, lang={lang_code}) [{label}]...")
 
-        print(f"  Waiting for job to complete...")
-        job.wait_until_complete()
+            job = client.speech_to_text_job.create_job(
+                model=BATCH_MODEL,
+                mode=TRANSCRIPTION_MODE,
+                language_code=lang_code,
+                with_diarization=False,
+            )
+            job.upload_files(file_paths=[str(p) for p in chunk_paths])
+            job.start()
 
-        results = job.get_file_results()
-        if results.get("failed"):
-            for f in results["failed"]:
-                print(f"  [FAIL] {f['file_name']}: {f.get('error_message', '?')}")
+            print(f"    Waiting for job to complete...")
+            job.wait_until_complete()
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            job.download_outputs(output_dir=tmpdir)
-            output_files = sorted(Path(tmpdir).glob("*.json"))
+            results = job.get_file_results()
+            if results.get("failed"):
+                for f in results["failed"]:
+                    print(f"    [FAIL] {f['file_name']}: {f.get('error_message', '?')}")
 
-            # SDK names outputs by upload index: 0.json, 1.json, ...
-            for i, (clip_row, out_file) in enumerate(zip(lang_clips, output_files)):
-                try:
-                    raw = json.loads(out_file.read_text(encoding="utf-8"))
-                    transcript = (
-                        raw.get("transcript")
-                        or raw.get("text")
-                        or ""
-                    ).strip()
+            with tempfile.TemporaryDirectory() as tmpdir:
+                job.download_outputs(output_dir=tmpdir)
+                output_files = sorted(Path(tmpdir).glob("*.json"))
 
-                    # Write back to the matching row in rows
-                    fn = clip_row["clip_filename"]
-                    match = next((r for r in rows if r.get("clip_filename") == fn), None)
-                    if match:
-                        match["transcript"] = transcript
-                        preview = transcript[:70] + "..." if len(transcript) > 70 else transcript
-                        print(f"  [{i}] {fn}: {preview!r}")
-                        success_total += 1
-                except Exception as e:
-                    print(f"  [ERROR] clip {i}: {e}")
+                for i, (clip_row, out_file) in enumerate(zip(chunk, output_files)):
+                    try:
+                        raw = json.loads(out_file.read_text(encoding="utf-8"))
+                        transcript = (
+                            raw.get("transcript") or raw.get("text") or ""
+                        ).strip()
+                        fn = clip_row["clip_filename"]
+                        match = next((r for r in rows if r.get("clip_filename") == fn), None)
+                        if match:
+                            match["transcript"] = transcript
+                            preview = transcript[:70] + "..." if len(transcript) > 70 else transcript
+                            print(f"    [{i}] {fn}: {preview!r}")
+                            success_total += 1
+                    except Exception as e:
+                        print(f"    [ERROR] clip {i}: {e}")
 
-        # Write after each language batch so progress is saved incrementally
-        save_clips_meta(rows)
+            save_clips_meta(rows)
 
     return success_total
 
