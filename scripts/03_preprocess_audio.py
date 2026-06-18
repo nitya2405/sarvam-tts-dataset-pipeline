@@ -331,6 +331,12 @@ def process_source(row: dict, meta_rows: list[dict], overwrite: bool = False) ->
     lang = row.get("language", "en").strip()
     genre = row.get("genre", "").strip()
 
+    if not overwrite:
+        existing = [r for r in meta_rows if str(r.get("source_index")) == index]
+        if existing:
+            print(f"  [SKIP] {len(existing)} clips already in metadata (use --overwrite to redo)")
+            return 0
+
     if overwrite:
         # Delete all existing clips and metadata entries for this source before re-processing
         stale = [r for r in meta_rows if str(r.get("source_index")) == index]
