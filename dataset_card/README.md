@@ -29,26 +29,26 @@ primary emotion label by a human reviewer.
 
 | | |
 |---|---|
-| Total clips | 85 |
-| Total duration | 73.5 minutes |
+| Total clips | 86 |
+| Total duration | 74.4 minutes |
 | Languages | Indian English (EN), Hindi (HI) |
 | Created | 2026-06-18 |
 | Audio format | 24 kHz mono 16-bit PCM WAV, −23 LUFS |
 
 ## Duration and Emotion by Language
 
-**English — 46 clips, 39.6 minutes**
+**English — 47 clips, 40.6 minutes**
 
 | Emotion | Clips |
 |---|---|
 | happy_excited | 12 |
 | intense_dramatic | 7 |
-| conversational_casual | 7 |
+| conversational_casual | 6 |
 | sad | 7 |
-| calm_reverent | 6 |
+| calm_reverent | 5 |
+| neutral | 4 |
 | formal | 3 |
 | angry | 3 |
-| neutral | 1 |
 
 **Hindi — 39 clips, 33.8 minutes**
 
@@ -65,7 +65,7 @@ primary emotion label by a human reviewer.
 
 ## Genre Distribution
 
-Across 17 source videos spanning: speech (20), conversational (14), podcast (13),
+Across 17 source videos spanning: speech (21), conversational (14), podcast (13),
 news (11), dramatic (11), vlog (7), standup (6), cooking (2), poetry (1).
 
 ## Methodology
@@ -232,6 +232,6 @@ open-source at [nitya2405/sarvam-tts-dataset-pipeline](https://github.com/nitya2
   year   = 2026,
   url    = {https://huggingface.co/datasets/nitya2405/sarvam-tts-dataset},
   note   = {Indian English and Hindi single-speaker TTS clips, human-reviewed,
-            emotion-tagged, 73.5 minutes total}
+            emotion-tagged, 74.4 minutes total}
 }
 ```
