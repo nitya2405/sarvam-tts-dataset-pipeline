@@ -13,3 +13,4 @@ python-dotenv>=1.0.0
 pandas>=2.0.0
 tqdm>=4.66.0
 pyyaml>=6.0.0
+sarvamai>=0.1.28

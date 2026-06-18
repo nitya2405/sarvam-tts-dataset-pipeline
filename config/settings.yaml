@@ -13,21 +13,12 @@ audio:
   silence_min_len_ms: 200
 
 sarvam:
-  base_url: https://api.sarvam.ai
-  # Saaras v3 is the current recommended model (saarika v2.5 is legacy/phased out)
-  # Both diarization and transcription use the Batch API (async) because:
-  #   - REST API limit: < 30 seconds
-  #   - Batch API: up to 2 hours, only mode supporting diarization
-  # Verify endpoint paths against https://docs.sarvam.ai before running
+  # Saaras v3 is the current model. Both phases use the SDK's job lifecycle:
+  # create → upload → start → wait → download. REST API is < 30s only.
   batch_model: saaras:v3
-  batch_submit_path: /speech-to-text/batch
-  batch_status_path: /speech-to-text/batch/{job_id}
+  diarization_mode: transcribe   # mode param for Phase 2 (diarization on)
+  transcription_mode: verbatim   # mode param for Phase 4 (verbatim, no diarization)
   cost_per_hour_inr: 45.0
-  batch_submit_timeout_s: 120
-  batch_poll_interval_s: 15
-  batch_max_wait_s: 7200
-  upload_format: mp3
-  upload_bitrate: 128k
 
 paths:
   raw: data/raw

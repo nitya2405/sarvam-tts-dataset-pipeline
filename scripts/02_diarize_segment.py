@@ -1,36 +1,37 @@
 """
-Phase 2: Send downloaded audio to Sarvam's Batch STT API with diarization.
-Uses the asynchronous Batch API (required for diarization and files > 30s).
-Outputs raw diarization JSON per source file into data/segments/.
+Phase 2: Diarize downloaded audio via Sarvam's Batch STT SDK (job lifecycle).
 
-NOTE: Batch API endpoints are set in config/settings.yaml — verify against
-https://docs.sarvam.ai before running if you get 404s.
+Job lifecycle per source file:
+  1. create_job()      — register a new async job
+  2. upload_files()    — upload the audio (webm/m4a/etc. natively supported)
+  3. start()           — kick off processing
+  4. wait_until_complete() — poll until done
+  5. download_outputs()    — fetch the result JSON
 
-IMPORTANT: This costs API credits (~₹45/hr of audio).
-Always run --dry-run first to see the estimated cost.
+Output per source: data/segments/{stem}_diarization.json
+  - segments[]: {speaker_id, start_time_s, end_time_s, text}
+  - speaker_summary: {SPEAKER_00: 200.1, SPEAKER_01: 40.3, ...}
 
-After this phase, open each data/segments/*_diarization.json, look at the
-speaker_summary field, identify which speaker_id is the target (the main speaker,
-not a guest or interviewer), and fill in the `target_speaker_label` column in
+After this phase: open each JSON, check speaker_summary (sorted by total time),
+identify the target speaker_id, and fill in the `target_speaker_label` column in
 metadata/source_log.csv before running Phase 3.
 
+IMPORTANT: Run --dry-run first to see the cost estimate before spending credits.
+
 Usage:
-    python scripts/02_diarize_segment.py --dry-run        # Cost estimate + first file only
-    python scripts/02_diarize_segment.py --index 0        # Diarize one source
-    python scripts/02_diarize_segment.py --all            # Diarize all (confirm cost first!)
+    python scripts/02_diarize_segment.py --dry-run        # Cost estimate, no API call
+    python scripts/02_diarize_segment.py --index 0        # Single source
+    python scripts/02_diarize_segment.py --all            # All (confirm cost first!)
 """
 
 import argparse
 import csv
 import json
 import os
-import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 
-import requests
 import yaml
 from dotenv import load_dotenv
 
@@ -41,14 +42,9 @@ SOURCE_LOG_CSV = ROOT / "metadata" / "source_log.csv"
 SEGMENTS_DIR = ROOT / "data" / "segments"
 SETTINGS = yaml.safe_load((ROOT / "config" / "settings.yaml").read_text())
 
-SARVAM_BASE_URL = SETTINGS["sarvam"]["base_url"]
 BATCH_MODEL = SETTINGS["sarvam"]["batch_model"]
-SUBMIT_PATH = SETTINGS["sarvam"]["batch_submit_path"]
-STATUS_PATH = SETTINGS["sarvam"]["batch_status_path"]
+DIARIZATION_MODE = SETTINGS["sarvam"]["diarization_mode"]
 COST_PER_HOUR_INR = SETTINGS["sarvam"]["cost_per_hour_inr"]
-SUBMIT_TIMEOUT = SETTINGS["sarvam"]["batch_submit_timeout_s"]
-POLL_INTERVAL = SETTINGS["sarvam"]["batch_poll_interval_s"]
-MAX_WAIT = SETTINGS["sarvam"]["batch_max_wait_s"]
 LANG_CODES = SETTINGS["language_codes"]
 
 
@@ -66,116 +62,82 @@ def load_source_log() -> list[dict]:
         return list(csv.DictReader(f))
 
 
-def convert_to_mp3(input_path: Path, output_path: Path) -> None:
-    """Convert audio to mono MP3 for API upload (compact + widely supported)."""
-    bitrate = SETTINGS["sarvam"]["upload_bitrate"]
-    subprocess.run(
-        ["ffmpeg", "-y", "-i", str(input_path),
-         "-vn", "-ac", "1", "-ab", bitrate, str(output_path)],
-        capture_output=True, check=True,
-    )
-
-
-def submit_batch_job(mp3_path: Path, language_code: str) -> str:
-    """Submit audio to Sarvam Batch STT API. Returns job_id."""
-    api_key = get_api_key()
-    headers = {"api-subscription-key": api_key}
-    url = f"{SARVAM_BASE_URL}{SUBMIT_PATH}"
-
-    print(f"  Submitting to Batch API: {url}")
-    with open(mp3_path, "rb") as f:
-        files = {"file": (mp3_path.name, f, "audio/mpeg")}
-        data = {
-            "model": BATCH_MODEL,
-            "language_code": language_code,
-            "with_diarization": "true",
-        }
-        resp = requests.post(url, headers=headers, files=files, data=data,
-                             timeout=SUBMIT_TIMEOUT)
-
-    if resp.status_code not in (200, 201, 202):
-        raise RuntimeError(
-            f"Submit failed {resp.status_code}: {resp.text[:500]}\n"
-            f"Verify endpoint at config/settings.yaml → sarvam.batch_submit_path"
-        )
-
-    body = resp.json()
-    job_id = body.get("job_id") or body.get("request_id") or body.get("id")
-    if not job_id:
-        raise RuntimeError(f"No job_id in response: {body}")
-    print(f"  Job submitted: {job_id}")
-    return str(job_id)
-
-
-def poll_batch_job(job_id: str) -> dict:
-    """Poll until the job completes. Returns the result dict."""
-    api_key = get_api_key()
-    headers = {"api-subscription-key": api_key}
-    status_url = f"{SARVAM_BASE_URL}{STATUS_PATH}".replace("{job_id}", job_id)
-
-    elapsed = 0
-    while elapsed < MAX_WAIT:
-        time.sleep(POLL_INTERVAL)
-        elapsed += POLL_INTERVAL
-
-        resp = requests.get(status_url, headers=headers, timeout=30)
-        if resp.status_code != 200:
-            print(f"  Poll error {resp.status_code}: {resp.text[:200]} — retrying...")
-            continue
-
-        body = resp.json()
-        status = (body.get("status") or body.get("state") or "").lower()
-
-        if status in ("completed", "done", "success"):
-            return body.get("output") or body.get("result") or body
-        elif status in ("failed", "error"):
-            raise RuntimeError(f"Batch job {job_id} failed: {body}")
-
-        mins = elapsed // 60
-        print(f"  [{mins}m elapsed] Job {job_id}: {status or 'running'}...")
-
-    raise TimeoutError(f"Job {job_id} did not complete within {MAX_WAIT}s")
-
-
-def save_diarization(result: dict, source_row: dict, output_path: Path) -> None:
-    """Parse API result, save enriched JSON, print speaker summary."""
-    diarized = result.get("diarized_transcript", {})
+def parse_sdk_output(raw: dict) -> list[dict]:
+    """Normalize SDK output into our segment format."""
+    diarized = raw.get("diarized_transcript", {})
     entries = diarized.get("entries", []) or diarized.get("segments", [])
-
-    segments = [
+    return [
         {
-            "speaker_id": e.get("speaker_id", e.get("speaker", "UNKNOWN")),
-            "start_time_s": e.get("start_time_seconds", e.get("start", 0)),
-            "end_time_s": e.get("end_time_seconds", e.get("end", 0)),
+            "speaker_id": e.get("speaker_id", "UNKNOWN"),
+            "start_time_s": float(e.get("start_time_seconds", e.get("start", 0))),
+            "end_time_s": float(e.get("end_time_seconds", e.get("end", 0))),
             "text": e.get("transcript", e.get("text", "")),
         }
         for e in entries
     ]
 
-    speaker_totals: dict[str, float] = {}
+
+def build_speaker_summary(segments: list[dict]) -> dict[str, float]:
+    totals: dict[str, float] = {}
     for seg in segments:
         sid = seg["speaker_id"]
-        dur = seg["end_time_s"] - seg["start_time_s"]
-        speaker_totals[sid] = speaker_totals.get(sid, 0) + dur
+        totals[sid] = totals.get(sid, 0) + (seg["end_time_s"] - seg["start_time_s"])
+    return {sid: round(s, 1) for sid, s in sorted(totals.items(), key=lambda x: -x[1])}
 
-    speaker_summary = {
-        sid: round(s, 1)
-        for sid, s in sorted(speaker_totals.items(), key=lambda x: -x[1])
-    }
 
+def run_diarization_job(source_path: Path, lang_code: str) -> list[dict]:
+    """Run one batch diarization job. Returns normalized segments list."""
+    from sarvamai import SarvamAI
+
+    client = SarvamAI(api_subscription_key=get_api_key())
+
+    print(f"  Creating job (model={BATCH_MODEL}, mode={DIARIZATION_MODE}, lang={lang_code})...")
+    job = client.speech_to_text_job.create_job(
+        model=BATCH_MODEL,
+        mode=DIARIZATION_MODE,
+        language_code=lang_code,
+        with_diarization=True,
+    )
+
+    print(f"  Uploading {source_path.name}...")
+    job.upload_files(file_paths=[str(source_path)])
+
+    print("  Starting job...")
+    job.start()
+
+    print("  Waiting for completion (this may take several minutes)...")
+    job.wait_until_complete()
+
+    results = job.get_file_results()
+    if results.get("failed"):
+        for f in results["failed"]:
+            raise RuntimeError(f"Job failed for {f['file_name']}: {f.get('error_message', '?')}")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        job.download_outputs(output_dir=tmpdir)
+        # SDK names output files by index: 0.json for the first uploaded file
+        candidates = sorted(Path(tmpdir).glob("*.json"))
+        if not candidates:
+            raise RuntimeError(f"No JSON output found in download directory")
+        raw = json.loads(candidates[0].read_text(encoding="utf-8"))
+
+    return parse_sdk_output(raw)
+
+
+def save_diarization(segments: list[dict], source_row: dict, output_path: Path) -> dict:
+    summary = build_speaker_summary(segments)
     output = {
         "source_index": source_row.get("source_index"),
         "speaker_name": source_row.get("speaker_name", ""),
         "language": source_row.get("language", ""),
         "video_url": source_row.get("video_url", ""),
         "local_file": source_row.get("local_file", ""),
-        "speaker_summary": speaker_summary,
+        "speaker_summary": summary,
         "segments": segments,
-        "api_response": result,
     }
-
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(output, ensure_ascii=False, indent=2), encoding="utf-8")
+    return summary
 
 
 def estimate_cost(rows: list[dict]) -> float:
@@ -190,10 +152,10 @@ def process_row(row: dict, dry_run: bool = False) -> bool:
         return False
 
     source_path = Path(local_file)
-    lang_code = LANG_CODES.get(row.get("language", "en").strip(), "en-IN")
     index = row.get("source_index", "?")
-
+    lang_code = LANG_CODES.get(row.get("language", "en").strip(), "en-IN")
     output_json = SEGMENTS_DIR / f"{source_path.stem}_diarization.json"
+
     if output_json.exists():
         print(f"  [SKIP] Already diarized: {output_json.name}")
         return True
@@ -203,40 +165,28 @@ def process_row(row: dict, dry_run: bool = False) -> bool:
     print(f"  [{index}] {source_path.name} | {dur:.0f}s | est. ₹{cost:.2f}")
 
     if dry_run:
-        print("  [DRY RUN] Skipping actual API call.")
+        print("  [DRY RUN] Skipping API call.")
         return True
 
-    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
-        tmp_path = Path(tmp.name)
     try:
-        print("  Converting to MP3...")
-        convert_to_mp3(source_path, tmp_path)
+        segments = run_diarization_job(source_path, lang_code)
+        summary = save_diarization(segments, row, output_json)
 
-        job_id = submit_batch_job(tmp_path, lang_code)
-        result = poll_batch_job(job_id)
-        save_diarization(result, row, output_json)
-
-        saved = json.loads(output_json.read_text(encoding="utf-8"))
-        summary = saved.get("speaker_summary", {})
-        print(f"  [OK] {output_json.name}")
+        print(f"  [OK] {output_json.name} — {len(segments)} segments")
         print(f"  Speaker totals (s): {summary}")
-        print(f"  --> Identify the target speaker_id and fill 'target_speaker_label'")
-        print(f"      in metadata/source_log.csv for index {index}.")
+        print(f"  --> Fill 'target_speaker_label' in source_log.csv for index {index}.")
         return True
 
     except Exception as e:
         print(f"  [ERROR] {e}")
         return False
-    finally:
-        if tmp_path.exists():
-            tmp_path.unlink(missing_ok=True)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Diarize downloaded audio via Sarvam Batch API")
+    parser = argparse.ArgumentParser(description="Diarize audio via Sarvam Batch SDK")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--dry-run", action="store_true",
-                       help="Cost estimate + first file only (no API call)")
+                       help="Print cost estimate only — no API calls")
     group.add_argument("--index", type=int,
                        help="Diarize one source by 0-based index")
     group.add_argument("--all", action="store_true",
@@ -254,9 +204,9 @@ def main() -> None:
     print()
 
     if args.dry_run:
-        print("=== DRY RUN: first file only ===")
+        print("=== DRY RUN: no API calls ===")
         process_row(valid[0], dry_run=True)
-        print(f"\nTo process all: python scripts/02_diarize_segment.py --all")
+        print(f"\nTo diarize all: python scripts/02_diarize_segment.py --all")
         return
 
     if args.index is not None:

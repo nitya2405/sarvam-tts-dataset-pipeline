@@ -1,25 +1,29 @@
 """
-Phase 4: Transcribe each clip using Sarvam's Batch STT API in verbatim mode.
-Uses the async Batch API because clips are 45-60s (REST API limit is < 30s).
-Updates the 'transcript' column in clips_metadata.csv after each clip.
+Phase 4: Transcribe clips via Sarvam Batch STT SDK in verbatim mode.
 
-IMPORTANT: Run --dry-run first to see cost estimate before processing the full batch.
+Uses the same job lifecycle as Phase 2 (create → upload → start → wait → download).
+Clips are 45-60s so the REST API (< 30s limit) cannot be used.
+
+Batches all pending clips into a single job per run for efficiency.
+Writes transcripts back to clips_metadata.csv as soon as the job completes.
+
+IMPORTANT: Run --dry-run first to see cost estimate.
 
 Usage:
-    python scripts/04_transcribe.py --dry-run                     # Cost estimate, first clip only
-    python scripts/04_transcribe.py --clip en_news_000_0001.wav   # One clip
+    python scripts/04_transcribe.py --dry-run                     # Cost estimate only
+    python scripts/04_transcribe.py --clip en_news_000_0001.wav   # Single clip
     python scripts/04_transcribe.py --all                         # All without transcripts
     python scripts/04_transcribe.py --all --redo                  # Re-transcribe everything
 """
 
 import argparse
 import csv
+import json
 import os
 import sys
-import time
+import tempfile
 from pathlib import Path
 
-import requests
 import yaml
 from dotenv import load_dotenv
 
@@ -30,14 +34,9 @@ CLIPS_META_CSV = ROOT / "metadata" / "clips_metadata.csv"
 CLIPS_DIR = ROOT / "data" / "clips"
 SETTINGS = yaml.safe_load((ROOT / "config" / "settings.yaml").read_text())
 
-SARVAM_BASE_URL = SETTINGS["sarvam"]["base_url"]
 BATCH_MODEL = SETTINGS["sarvam"]["batch_model"]
-SUBMIT_PATH = SETTINGS["sarvam"]["batch_submit_path"]
-STATUS_PATH = SETTINGS["sarvam"]["batch_status_path"]
+TRANSCRIPTION_MODE = SETTINGS["sarvam"]["transcription_mode"]
 COST_PER_HOUR_INR = SETTINGS["sarvam"]["cost_per_hour_inr"]
-SUBMIT_TIMEOUT = SETTINGS["sarvam"]["batch_submit_timeout_s"]
-POLL_INTERVAL = SETTINGS["sarvam"]["batch_poll_interval_s"]
-MAX_WAIT = SETTINGS["sarvam"]["batch_max_wait_s"]
 LANG_CODES = SETTINGS["language_codes"]
 
 CLIPS_META_FIELDS = [
@@ -70,112 +69,117 @@ def save_clips_meta(rows: list[dict]) -> None:
         writer.writerows(rows)
 
 
-def submit_batch_job(clip_path: Path, language_code: str) -> str:
-    """Submit a clip to Sarvam Batch STT in verbatim mode. Returns job_id."""
-    api_key = get_api_key()
-    headers = {"api-subscription-key": api_key}
-    url = f"{SARVAM_BASE_URL}{SUBMIT_PATH}"
-
-    with open(clip_path, "rb") as f:
-        files = {"file": (clip_path.name, f, "audio/wav")}
-        data = {
-            "model": BATCH_MODEL,
-            "language_code": language_code,
-            "transcript_format": "verbatim",
-        }
-        resp = requests.post(url, headers=headers, files=files, data=data,
-                             timeout=SUBMIT_TIMEOUT)
-
-    if resp.status_code not in (200, 201, 202):
-        raise RuntimeError(
-            f"Submit failed {resp.status_code}: {resp.text[:500]}\n"
-            f"Verify endpoint at config/settings.yaml → sarvam.batch_submit_path"
-        )
-
-    body = resp.json()
-    job_id = body.get("job_id") or body.get("request_id") or body.get("id")
-    if not job_id:
-        raise RuntimeError(f"No job_id in response: {body}")
-    return str(job_id)
-
-
-def poll_batch_job(job_id: str) -> str:
-    """Poll until job completes. Returns transcript string."""
-    api_key = get_api_key()
-    headers = {"api-subscription-key": api_key}
-    status_url = f"{SARVAM_BASE_URL}{STATUS_PATH}".replace("{job_id}", job_id)
-
-    elapsed = 0
-    while elapsed < MAX_WAIT:
-        time.sleep(POLL_INTERVAL)
-        elapsed += POLL_INTERVAL
-
-        resp = requests.get(status_url, headers=headers, timeout=30)
-        if resp.status_code != 200:
-            print(f"    Poll error {resp.status_code}, retrying...")
-            continue
-
-        body = resp.json()
-        status = (body.get("status") or body.get("state") or "").lower()
-
-        if status in ("completed", "done", "success"):
-            result = body.get("output") or body.get("result") or body
-            return (result.get("transcript") or result.get("text") or "").strip()
-        elif status in ("failed", "error"):
-            raise RuntimeError(f"Job {job_id} failed: {body}")
-
-    raise TimeoutError(f"Job {job_id} did not complete within {MAX_WAIT}s")
-
-
-def transcribe_clip(clip_path: Path, language_code: str) -> str:
-    job_id = submit_batch_job(clip_path, language_code)
-    return poll_batch_job(job_id)
-
-
 def estimate_cost(rows: list[dict]) -> tuple[float, float]:
     total_s = sum(float(r.get("duration_s", 0) or 0) for r in rows)
     hours = total_s / 3600
     return hours, hours * COST_PER_HOUR_INR
 
 
-def process_row(row: dict, rows: list[dict], dry_run: bool = False) -> bool:
-    fn = row.get("clip_filename", "").strip()
-    if not fn:
-        return False
+def transcribe_batch(clips: list[dict], rows: list[dict]) -> int:
+    """
+    Submit all clips as one batch job grouped by language.
+    Clips within one language share a job; different languages need separate jobs
+    because language_code is per-job in the SDK.
+    Returns count of successfully transcribed clips.
+    """
+    from sarvamai import SarvamAI
 
+    client = SarvamAI(api_subscription_key=get_api_key())
+
+    # Group by language so each job has a single language_code
+    by_lang: dict[str, list[dict]] = {}
+    for clip in clips:
+        lang = clip.get("language", "en").strip()
+        by_lang.setdefault(lang, []).append(clip)
+
+    success_total = 0
+
+    for lang, lang_clips in by_lang.items():
+        lang_code = LANG_CODES.get(lang, "en-IN")
+        clip_paths = [CLIPS_DIR / c["clip_filename"] for c in lang_clips]
+        missing = [p for p in clip_paths if not p.exists()]
+        if missing:
+            print(f"  [WARN] Missing files, skipping: {[p.name for p in missing]}")
+            clip_paths = [p for p in clip_paths if p.exists()]
+            lang_clips = [c for c in lang_clips if (CLIPS_DIR / c["clip_filename"]).exists()]
+
+        if not clip_paths:
+            continue
+
+        print(f"\n  Submitting {len(clip_paths)} {lang.upper()} clips "
+              f"(model={BATCH_MODEL}, mode={TRANSCRIPTION_MODE}, lang={lang_code})...")
+
+        job = client.speech_to_text_job.create_job(
+            model=BATCH_MODEL,
+            mode=TRANSCRIPTION_MODE,
+            language_code=lang_code,
+            with_diarization=False,
+        )
+        job.upload_files(file_paths=[str(p) for p in clip_paths])
+        job.start()
+
+        print(f"  Waiting for job to complete...")
+        job.wait_until_complete()
+
+        results = job.get_file_results()
+        if results.get("failed"):
+            for f in results["failed"]:
+                print(f"  [FAIL] {f['file_name']}: {f.get('error_message', '?')}")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            job.download_outputs(output_dir=tmpdir)
+            output_files = sorted(Path(tmpdir).glob("*.json"))
+
+            # SDK names outputs by upload index: 0.json, 1.json, ...
+            for i, (clip_row, out_file) in enumerate(zip(lang_clips, output_files)):
+                try:
+                    raw = json.loads(out_file.read_text(encoding="utf-8"))
+                    transcript = (
+                        raw.get("transcript")
+                        or raw.get("text")
+                        or ""
+                    ).strip()
+
+                    # Write back to the matching row in rows
+                    fn = clip_row["clip_filename"]
+                    match = next((r for r in rows if r.get("clip_filename") == fn), None)
+                    if match:
+                        match["transcript"] = transcript
+                        preview = transcript[:70] + "..." if len(transcript) > 70 else transcript
+                        print(f"  [{i}] {fn}: {preview!r}")
+                        success_total += 1
+                except Exception as e:
+                    print(f"  [ERROR] clip {i}: {e}")
+
+        # Write after each language batch so progress is saved incrementally
+        save_clips_meta(rows)
+
+    return success_total
+
+
+def transcribe_single(clip_row: dict, rows: list[dict]) -> bool:
+    """Transcribe one clip as its own batch job."""
+    fn = clip_row.get("clip_filename", "")
     clip_path = CLIPS_DIR / fn
     if not clip_path.exists():
         print(f"  [SKIP] Not found: {clip_path}")
         return False
 
-    lang = row.get("language", "en").strip()
+    lang = clip_row.get("language", "en").strip()
     lang_code = LANG_CODES.get(lang, "en-IN")
-    dur = float(row.get("duration_s", 0) or 0)
+    dur = float(clip_row.get("duration_s", 0) or 0)
     cost = (dur / 3600) * COST_PER_HOUR_INR
-
     print(f"  {fn} | {dur:.1f}s | {lang_code} | est. ₹{cost:.4f}")
 
-    if dry_run:
-        print("  [DRY RUN] Skipping actual API call.")
-        return True
-
-    try:
-        transcript = transcribe_clip(clip_path, lang_code)
-        row["transcript"] = transcript
-        save_clips_meta(rows)  # write immediately after each clip
-        preview = transcript[:80] + "..." if len(transcript) > 80 else transcript
-        print(f"  [OK] {preview!r}")
-        return True
-    except Exception as e:
-        print(f"  [ERROR] {e}")
-        return False
+    count = transcribe_batch([clip_row], rows)
+    return count > 0
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Transcribe clips via Sarvam Batch ASR")
+    parser = argparse.ArgumentParser(description="Transcribe clips via Sarvam Batch SDK")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--dry-run", action="store_true",
-                       help="Cost estimate + first untranscribed clip only")
+                       help="Cost estimate only — no API calls")
     group.add_argument("--clip", metavar="FILENAME",
                        help="Transcribe one clip by filename")
     group.add_argument("--all", action="store_true",
@@ -203,22 +207,19 @@ def main() -> None:
         if not pending:
             print("No untranscribed clips found.")
             return
-        print("=== DRY RUN: first clip only ===")
-        process_row(pending[0], rows, dry_run=True)
+        print("=== DRY RUN: no API calls ===")
+        first = pending[0]
+        dur = float(first.get("duration_s", 0) or 0)
+        print(f"  Would transcribe: {first['clip_filename']} ({dur:.1f}s)")
         print(f"\nTo transcribe all: python scripts/04_transcribe.py --all")
         return
 
     if args.clip:
-        process_row(pending[0], rows)
+        transcribe_single(pending[0], rows)
         return
 
-    success = 0
-    for i, row in enumerate(pending):
-        print(f"[{i+1}/{len(pending)}]", end=" ")
-        if process_row(row, rows):
-            success += 1
-
-    print(f"\nDone: {success}/{len(pending)} transcribed → {CLIPS_META_CSV}")
+    n = transcribe_batch(pending, rows)
+    print(f"\nDone: {n}/{len(pending)} transcribed → {CLIPS_META_CSV}")
 
 
 if __name__ == "__main__":
