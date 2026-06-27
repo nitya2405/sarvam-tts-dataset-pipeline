@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sarvam TTS — Dataset Evaluation</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#f1f5f9;
+  --card:#ffffff;
+  --border:#e2e8f0;
+  --text:#0f172a;
+  --muted:#64748b;
+  --accent:#3b82f6;
+  --green:#16a34a;
+  --green-bg:#f0fdf4;
+  --green-bd:#86efac;
+  --amber:#b45309;
+  --amber-bg:#fffbeb;
+  --amber-bd:#fcd34d;
+}
+body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--text);font-size:13px;line-height:1.6;min-height:100vh}
+
+/* ── Header ── */
+.hdr{
+  background:linear-gradient(135deg,#0f172a 0%,#1e3a5f 60%,#1e40af 100%);
+  color:#fff;padding:48px 56px 40px;
+}
+.hdr-eyebrow{font-size:11px;font-weight:500;letter-spacing:1.5px;text-transform:uppercase;color:rgba(255,255,255,.45);margin-bottom:10px}
+.hdr-title{font-size:28px;font-weight:700;letter-spacing:-.5px;line-height:1.2}
+.hdr-sub{font-size:13px;color:rgba(255,255,255,.5);margin-top:6px}
+.stat-row{display:flex;flex-wrap:wrap;gap:12px;margin-top:32px}
+.stat{background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);border-radius:10px;padding:14px 20px;min-width:110px}
+.stat-val{font-size:22px;font-weight:700;line-height:1}
+.stat-val.good{color:#4ade80}
+.stat-lbl{font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:rgba(255,255,255,.45);margin-top:5px}
+
+/* ── Badges ── */
+.badge-row{display:flex;flex-wrap:wrap;gap:8px;background:#fff;padding:14px 56px;border-bottom:1px solid var(--border)}
+.badge{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:500;padding:5px 12px;border-radius:20px}
+.badge.ok{background:var(--green-bg);color:var(--green);border:1px solid var(--green-bd)}
+.badge.warn{background:var(--amber-bg);color:var(--amber);border:1px solid var(--amber-bd)}
+.badge-icon{font-size:12px}
+
+/* ── Layout ── */
+.main{max-width:1320px;margin:0 auto;padding:36px 56px 48px}
+.sec-head{font-size:15px;font-weight:700;color:var(--text);margin:40px 0 2px}
+.sec-head:first-of-type{margin-top:0}
+.sec-sub{font-size:12px;color:var(--muted);margin-bottom:14px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.grid.three{grid-template-columns:1fr 1fr 1fr}
+.full{grid-column:1/-1}
+.card{background:var(--card);border-radius:12px;border:1px solid var(--border);box-shadow:0 1px 2px rgba(0,0,0,.04),0 4px 12px rgba(0,0,0,.03);padding:22px 26px}
+.card-label{font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.9px;color:var(--muted);margin-bottom:14px;display:flex;align-items:center;gap:6px}
+.card-label span{font-size:14px}
+.wrap{position:relative}
+
+/* ── Language special card ── */
+.lang-card{display:flex;align-items:center;gap:24px}
+.lang-donut-wrap{flex:0 0 200px;height:200px;position:relative}
+.lang-info{flex:1;display:flex;flex-direction:column;gap:10px}
+.lang-row2{display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:8px;background:var(--bg)}
+.lang-dot{width:11px;height:11px;border-radius:50%;flex-shrink:0}
+.lang-name{font-weight:700;font-size:15px;letter-spacing:-.3px}
+.lang-detail{font-size:12px;color:var(--muted);margin-top:1px}
+.lang-detail strong{color:var(--text)}
+
+/* ── Quality metrics row ── */
+.qm-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
+.qm-card{background:var(--card);border-radius:10px;border:1px solid var(--border);padding:14px 18px;text-align:center}
+.qm-val{font-size:20px;font-weight:700;color:var(--accent)}
+.qm-val.great{color:#16a34a}
+.qm-val.warn{color:#d97706}
+.qm-lbl{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.7px;margin-top:4px}
+
+/* ── Footer ── */
+.footer{text-align:center;padding:28px;color:var(--muted);font-size:11px;border-top:1px solid var(--border);margin-top:12px}
+.footer a{color:var(--accent);text-decoration:none}
+.footer a:hover{text-decoration:underline}
+
+@media(max-width:900px){
+  .grid,.grid.three{grid-template-columns:1fr}
+  .full{grid-column:1}
+  .hdr,.main,.badge-row{padding-left:24px;padding-right:24px}
+  .qm-grid{grid-template-columns:1fr 1fr}
+  .lang-card{flex-direction:column}
+}
+</style>
+</head>
+<body>
+
+<div class="hdr">
+  <div class="hdr-eyebrow">Dataset Evaluation Report</div>
+  <div class="hdr-title" id="hdr-title">Sarvam TTS Dataset</div>
+  <div class="hdr-sub" id="hdr-sub"></div>
+  <div class="stat-row" id="stat-row"></div>
+</div>
+
+<div class="badge-row" id="badge-row"></div>
+
+<div class="main">
+
+  <!-- Audio quality metrics row -->
+  <div class="qm-grid" id="qm-grid"></div>
+
+  <!-- Section 1: Composition -->
+  <div class="sec-head">Composition &amp; Coverage</div>
+  <div class="sec-sub">Language balance, emotional range, and genre diversity across the dataset.</div>
+  <div class="grid" style="margin-bottom:16px">
+    <div class="card">
+      <div class="card-label"><span>🌐</span>Language Balance</div>
+      <div class="lang-card">
+        <div class="lang-donut-wrap"><canvas id="c-lang"></canvas></div>
+        <div class="lang-info" id="lang-info"></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-label"><span>🎭</span>Primary Emotion Distribution</div>
+      <div class="wrap" style="height:220px"><canvas id="c-emotion"></canvas></div>
+    </div>
+  </div>
+
+  <!-- Section 2: Diversity -->
+  <div class="sec-head">Content Diversity</div>
+  <div class="sec-sub">Genre coverage and speaker variety ensure the dataset generalises well.</div>
+  <div class="grid" style="margin-bottom:16px">
+    <div class="card">
+      <div class="card-label"><span>🎙</span>Genre Distribution</div>
+      <div class="wrap" style="height:240px"><canvas id="c-genre"></canvas></div>
+    </div>
+    <div class="card">
+      <div class="card-label"><span>👤</span>Speaker Distribution</div>
+      <div class="wrap" style="height:400px"><canvas id="c-speaker"></canvas></div>
+    </div>
+  </div>
+
+  <!-- Section 3: Audio Quality -->
+  <div class="sec-head">Audio Quality</div>
+  <div class="sec-sub">LUFS deviation from the −23 target, SNR distribution, and clip length consistency.</div>
+  <div class="grid" style="margin-bottom:16px">
+    <div class="card">
+      <div class="card-label"><span>📊</span>LUFS Deviation from −23 Target</div>
+      <div class="wrap" style="height:190px"><canvas id="c-lufs"></canvas></div>
+    </div>
+    <div class="card">
+      <div class="card-label"><span>📡</span>Signal-to-Noise Ratio (dB)</div>
+      <div class="wrap" style="height:190px"><canvas id="c-snr"></canvas></div>
+    </div>
+    <div class="card">
+      <div class="card-label"><span>⏱</span>Clip Duration (seconds)</div>
+      <div class="wrap" style="height:190px"><canvas id="c-dur"></canvas></div>
+    </div>
+    <div class="card">
+      <div class="card-label"><span>🔊</span>Spectral Centroid (Hz)</div>
+      <div class="wrap" style="height:190px"><canvas id="c-sc"></canvas></div>
+    </div>
+  </div>
+
+  <!-- Section 4: Speech Rate -->
+  <div class="sec-head">Speech Rate</div>
+  <div class="sec-sub">Words per minute distribution and secondary emotion tagging.</div>
+  <div class="grid">
+    <div class="card">
+      <div class="card-label"><span>💬</span>Speech Rate Distribution (WPM)</div>
+      <div class="wrap" style="height:190px"><canvas id="c-wpm"></canvas></div>
+    </div>
+    <div class="card">
+      <div class="card-label"><span>🌀</span>Secondary Emotion Distribution</div>
+      <div class="wrap" style="height:220px"><canvas id="c-sec-emotion"></canvas></div>
+    </div>
+  </div>
+
+</div>
+
+<div class="footer" id="footer"></div>
+
+<script>
+const D = {"meta": {"n_clips": 72, "total_min": 62.5, "n_speakers": 18, "n_genres": 9, "mean_snr": 42.33, "mean_lufs": -23.03, "lufs_ok_pct": 97.2, "tp_ok_pct": 100.0, "n_poor_snr": 0, "lang_balanced": true, "today": "2026-06-27", "repo_id": "nitya2405/sarvam-tts-dataset", "label": "approved clips"}, "language": {"labels": ["EN", "HI"], "clips": [37, 35], "minutes": [32.0, 30.5]}, "emotion": {"labels": ["happy_excited", "conversational_casual", "intense_dramatic", "calm_reverent", "sad", "formal", "neutral", "angry"], "values": [12, 11, 10, 9, 9, 8, 7, 6]}, "sec_emotion": {"labels": ["neutral", "conversational_casual", "intense_dramatic", "formal", "sad", "calm_reverent", "angry", "happy_excited"], "values": [19, 14, 14, 8, 5, 4, 4, 2]}, "genre": {"labels": ["speech", "dramatic", "conversational", "news", "vlog", "podcast", "standup", "poetry", "cooking"], "values": [20, 12, 11, 8, 6, 5, 5, 3, 2]}, "speaker": {"labels": ["Anand Mahindra", "Vikas Sir", "Sunita Rawat", "Rohan Joshi", "Narendra Modi", "Ravish Kumar", "Dr Vivek Modi", "Kenny Sebastian", "Ravi Gupta", "Unknown Narrator", "Palki Sharma", "Arnab Goswami", "Kabita", "Harshita Garge", "Sudhanshu Trivedi", "Nikhil Kamath", "Nayab Midha", "Shubham Shyam"], "values": [7, 7, 6, 6, 6, 6, 5, 5, 5, 5, 3, 2, 2, 2, 2, 1, 1, 1]}, "dur_hist": {"labels": ["47.1", "48.1", "49.1", "50.1", "51.2", "52.2", "53.2", "54.2", "55.2", "56.2"], "values": [2, 2, 4, 8, 20, 21, 9, 3, 2, 1]}, "wpm_hist": {"labels": ["111.7", "121.3", "131.0", "140.6", "150.2", "159.9", "169.5", "179.1", "188.8", "198.4", "208.0", "217.7"], "values": [6, 2, 3, 7, 12, 8, 15, 7, 4, 6, 1, 1]}, "lufs_hist": {"labels": ["-1.5", "-1.3", "-1.2", "-1.0", "-0.9", "-0.7", "-0.6", "-0.4", "-0.3", "-0.1"], "values": [2, 0, 0, 0, 0, 0, 0, 0, 0, 70]}, "snr_hist": {"labels": ["18.8", "23.1", "27.4", "31.8", "36.1", "40.4", "44.7", "49.0", "53.3", "57.6", "62.0", "66.3"], "values": [1, 2, 17, 7, 14, 3, 10, 3, 2, 5, 6, 2]}, "sc_hist": {"labels": ["1057.4", "1225.2", "1393.0", "1560.8", "1728.6", "1896.4", "2064.2", "2232.0", "2399.8", "2567.6"], "values": [2, 3, 4, 11, 16, 8, 15, 9, 2, 2]}};
+
+// ── Chart.js global defaults ──────────────────────────────────────────────
+Chart.defaults.font.family = "'Inter', system-ui, sans-serif";
+Chart.defaults.font.size = 11;
+Chart.defaults.color = '#64748b';
+Chart.defaults.plugins.legend.display = false;
+Chart.defaults.plugins.tooltip.backgroundColor = '#0f172a';
+Chart.defaults.plugins.tooltip.padding = 10;
+Chart.defaults.plugins.tooltip.cornerRadius = 8;
+Chart.defaults.plugins.tooltip.titleColor = '#f8fafc';
+Chart.defaults.plugins.tooltip.bodyColor = '#94a3b8';
+Chart.defaults.plugins.tooltip.titleFont = { size: 12, weight: '600' };
+Chart.defaults.plugins.tooltip.bodyFont = { size: 11 };
+
+const PALETTE = [
+  '#3b82f6','#8b5cf6','#ec4899','#06b6d4',
+  '#10b981','#f59e0b','#ef4444','#6366f1',
+  '#14b8a6','#f97316','#84cc16','#e879f9',
+];
+
+const SCALE = {
+  grid: { color: '#f1f5f9', drawBorder: false },
+  ticks: { color: '#94a3b8', font: { size: 10 } },
+  border: { display: false },
+};
+
+function hbar(id, labels, values, colors) {
+  const bg = colors || labels.map((_, i) => PALETTE[i % PALETTE.length]);
+  new Chart(document.getElementById(id), {
+    type: 'bar',
+    data: { labels, datasets: [{ data: values, backgroundColor: bg, borderRadius: 5, borderWidth: 0 }] },
+    options: {
+      indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ...SCALE, beginAtZero: true, grid: { color: '#f1f5f9' } },
+        y: { ...SCALE, ticks: { ...SCALE.ticks, font: { size: 11 } } },
+      },
+    },
+  });
+}
+
+function hist(id, labels, values, color, xLabel) {
+  new Chart(document.getElementById(id), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        data: values,
+        backgroundColor: color + 'cc',
+        borderColor: color,
+        borderWidth: 1.5,
+        borderRadius: 4,
+        borderSkipped: false,
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ...SCALE, title: { display: !!xLabel, text: xLabel, color: '#94a3b8', font: { size: 10 } } },
+        y: { ...SCALE, beginAtZero: true, ticks: { precision: 0 } },
+      },
+      categoryPercentage: 0.95, barPercentage: 0.9,
+    },
+  });
+}
+
+function doughnut(id, labels, values, colors) {
+  const bg = colors || labels.map((_, i) => PALETTE[i % PALETTE.length]);
+  return new Chart(document.getElementById(id), {
+    type: 'doughnut',
+    data: { labels, datasets: [{ data: values, backgroundColor: bg, borderWidth: 2, borderColor: '#fff', hoverOffset: 4 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      cutout: '68%',
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: ctx => ` ${ctx.label}: ${ctx.parsed} clips` } },
+      },
+    },
+  });
+}
+
+// ── Populate header ───────────────────────────────────────────────────────
+const m = D.meta;
+document.getElementById('hdr-title').textContent = 'Sarvam TTS Dataset';
+document.getElementById('hdr-sub').textContent =
+  m.repo_id + '  ·  Generated ' + m.today + '  ·  Scope: ' + m.label;
+
+const statDefs = [
+  { val: m.n_clips,                   lbl: 'Approved Clips',    cls: '' },
+  { val: m.total_min + ' min',        lbl: 'Total Duration',    cls: '' },
+  { val: m.n_speakers,                lbl: 'Unique Speakers',   cls: '' },
+  { val: m.n_genres,                  lbl: 'Genres',            cls: '' },
+  { val: m.mean_snr + ' dB',         lbl: 'Mean SNR',          cls: 'good' },
+  { val: m.lufs_ok_pct + '%',        lbl: 'LUFS Conformance',  cls: m.lufs_ok_pct >= 95 ? 'good' : '' },
+];
+const statRow = document.getElementById('stat-row');
+statDefs.forEach(s => {
+  statRow.innerHTML += `<div class="stat"><div class="stat-val ${s.cls}">${s.val}</div><div class="stat-lbl">${s.lbl}</div></div>`;
+});
+
+// ── Quality metrics row ───────────────────────────────────────────────────
+const qmDefs = [
+  { val: m.lufs_ok_pct + '%',   lbl: 'LUFS ±1 dB Conformance', cls: m.lufs_ok_pct >= 95 ? 'great' : 'warn' },
+  { val: m.tp_ok_pct + '%',     lbl: 'True Peak ≤ −1 dBTP',   cls: m.tp_ok_pct >= 100 ? 'great' : 'warn' },
+  { val: m.mean_lufs,            lbl: 'Mean LUFS (target −23)', cls: '' },
+  { val: m.n_poor_snr === 0 ? '0 clips' : m.n_poor_snr + ' clips', lbl: 'Poor SNR (<15 dB)', cls: m.n_poor_snr === 0 ? 'great' : 'warn' },
+];
+const qmGrid = document.getElementById('qm-grid');
+qmDefs.forEach(q => {
+  qmGrid.innerHTML += `<div class="qm-card"><div class="qm-val ${q.cls}">${q.val}</div><div class="qm-lbl">${q.lbl}</div></div>`;
+});
+
+// ── Badges ────────────────────────────────────────────────────────────────
+const badgeDefs = [
+  { ok: m.tp_ok_pct >= 100,            text: '100% True Peak Compliance' },
+  { ok: m.n_poor_snr === 0,            text: 'Zero Poor-SNR Clips' },
+  { ok: m.lufs_ok_pct >= 95,           text: m.lufs_ok_pct + '% LUFS Conformance' },
+  { ok: m.n_speakers >= 10,            text: m.n_speakers + ' Unique Speakers' },
+  { ok: m.n_genres >= 7,               text: m.n_genres + ' Genres Covered' },
+  { ok: m.lang_balanced,               text: 'Balanced EN / HI Split' },
+];
+const badgeRow = document.getElementById('badge-row');
+badgeDefs.forEach(b => {
+  const cls = b.ok ? 'ok' : 'warn';
+  const icon = b.ok ? '✓' : '⚠';
+  badgeRow.innerHTML += `<span class="badge ${cls}"><span class="badge-icon">${icon}</span>${b.text}</span>`;
+});
+
+// ── Language doughnut + info ──────────────────────────────────────────────
+const langColors = ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b'];
+doughnut('c-lang', D.language.labels, D.language.clips, langColors);
+const langInfo = document.getElementById('lang-info');
+D.language.labels.forEach((lang, i) => {
+  langInfo.innerHTML += `
+    <div class="lang-row2">
+      <div class="lang-dot" style="background:${langColors[i % langColors.length]}"></div>
+      <div>
+        <div class="lang-name">${lang}</div>
+        <div class="lang-detail"><strong>${D.language.clips[i]}</strong> clips &nbsp;·&nbsp; <strong>${D.language.minutes[i]}</strong> min</div>
+      </div>
+    </div>`;
+});
+
+// ── Emotion charts ────────────────────────────────────────────────────────
+hbar('c-emotion', D.emotion.labels, D.emotion.values);
+hbar('c-sec-emotion', D.sec_emotion.labels, D.sec_emotion.values);
+
+// ── Genre & Speaker ───────────────────────────────────────────────────────
+hbar('c-genre', D.genre.labels, D.genre.values, D.genre.labels.map((_, i) => PALETTE[i % PALETTE.length]));
+hbar('c-speaker', D.speaker.labels, D.speaker.values, '#3b82f6');
+
+// ── Histograms ────────────────────────────────────────────────────────────
+hist('c-lufs', D.lufs_hist.labels, D.lufs_hist.values, '#3b82f6', 'LUFS Δ from −23');
+hist('c-snr',  D.snr_hist.labels,  D.snr_hist.values,  '#10b981', 'SNR (dB)');
+hist('c-dur',  D.dur_hist.labels,  D.dur_hist.values,  '#8b5cf6', 'Duration (s)');
+hist('c-wpm',  D.wpm_hist.labels,  D.wpm_hist.values,  '#f59e0b', 'Words per minute');
+hist('c-sc',   D.sc_hist.labels,   D.sc_hist.values,   '#06b6d4', 'Centroid (Hz)');
+
+// ── Footer ────────────────────────────────────────────────────────────────
+document.getElementById('footer').innerHTML =
+  'Generated by <code>scripts/07_evaluate_dataset.py</code> on ' + m.today +
+  ' &nbsp;·&nbsp; <a href="https://huggingface.co/datasets/' + m.repo_id + '" target="_blank">View on Hugging Face ↗</a>';
+</script>
+</body>
+</html>

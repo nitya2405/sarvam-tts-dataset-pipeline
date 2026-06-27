@@ -1,7 +1,9 @@
 """Mark source 19 clips 0006+ with a placeholder so Phase 4 skips them."""
 import csv
+from pathlib import Path
+ROOT = Path(__file__).parent.parent
 
-path = 'metadata/clips_metadata.csv'
+path = ROOT / 'metadata/clips_metadata.csv'
 with open(path, newline='', encoding='utf-8-sig') as f:
     rows = list(csv.DictReader(f))
     fieldnames = list(rows[0].keys())

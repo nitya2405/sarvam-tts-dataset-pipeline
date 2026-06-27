@@ -1,7 +1,8 @@
 import csv
 from collections import defaultdict
-
-with open('metadata/clips_metadata.csv', newline='', encoding='utf-8-sig') as f:
+from pathlib import Path
+ROOT = Path(__file__).parent.parent
+with open(ROOT / 'metadata/clips_metadata.csv', newline='', encoding='utf-8-sig') as f:
     rows = list(csv.DictReader(f))
 
 approved = [r for r in rows if r.get('approved', '').lower() == 'true']

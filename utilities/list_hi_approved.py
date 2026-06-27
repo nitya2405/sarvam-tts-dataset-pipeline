@@ -1,5 +1,7 @@
 import csv
-with open('metadata/clips_metadata.csv', newline='', encoding='utf-8-sig') as f:
+from pathlib import Path
+ROOT = Path(__file__).parent.parent
+with open(ROOT / 'metadata/clips_metadata.csv', newline='', encoding='utf-8-sig') as f:
     rows = list(csv.DictReader(f))
 for i, r in enumerate(rows):
     if r.get('language') == 'hi' and r.get('approved', '').lower() == 'true':

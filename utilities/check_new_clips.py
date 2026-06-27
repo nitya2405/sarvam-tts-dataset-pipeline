@@ -1,5 +1,7 @@
 import csv
-with open('metadata/clips_metadata.csv', newline='', encoding='utf-8-sig') as f:
+from pathlib import Path
+ROOT = Path(__file__).parent.parent
+with open(ROOT / 'metadata/clips_metadata.csv', newline='', encoding='utf-8-sig') as f:
     rows = list(csv.DictReader(f))
 
 new = [r for r in rows if r.get('source_index') in ['17', '18', '19']]

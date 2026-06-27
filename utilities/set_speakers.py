@@ -1,6 +1,8 @@
 import csv
+from pathlib import Path
+ROOT = Path(__file__).parent.parent
 
-path = 'metadata/source_log.csv'
+path = ROOT / 'metadata/source_log.csv'
 with open(path, newline='', encoding='utf-8-sig') as f:
     rows = list(csv.DictReader(f))
     fieldnames = list(rows[0].keys())
